@@ -12,7 +12,7 @@ It answers questions like:
 <!-- Add a screenshot: save one as docs/screenshot.png and uncomment the next line -->
 <!-- ![emptyDir Cache Lab](docs/screenshot.png) -->
 
-**Live demo:** `https://<your-github-user>.github.io/emptydir-cache-lab/` *(after enabling GitHub Pages, see below)*
+**Live demo:** `https://github.com/ataha/emptydir-cache-lab` *(after enabling GitHub Pages, see below)*
 
 ---
 
@@ -57,7 +57,7 @@ emptydir-cache-lab/
 ### Run the lab
 
 ```bash
-git clone https://github.com/<your-github-user>/emptydir-cache-lab.git
+git clone https://github.com/ataha/emptydir-cache-lab.git
 cd emptydir-cache-lab
 open index.html          # macOS
 xdg-open index.html      # Linux

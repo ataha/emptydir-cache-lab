@@ -152,6 +152,27 @@ pre{background:var(--sunk);border-radius:6px;padding:12px 14px;overflow-x:auto;f
 .calc-out{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--accent)}
 footer{margin-top:28px;font-size:12.5px;color:var(--muted);max-width:90ch}
 @media (prefers-reduced-motion:reduce){.track .s{transition:none}}
+
+/* demo mode (#demo): scripted tour for screen recording */
+body.demo aside.panel, body.demo .ref, body.demo footer, body.demo header p, body.demo .path,
+body.demo .toolbar, body.demo .notes, body.demo .rail-head{display:none}
+body.demo .grid{grid-template-columns:minmax(0,1fr);margin-top:14px}
+body.demo .wrap{max-width:1020px;padding-block:18px 150px}
+body.demo .chips{overflow:hidden;flex-wrap:wrap}
+body.demo .chip{min-width:0;padding:6px 9px}
+body.demo .chip .t{display:none}
+body.demo .log li.pending{display:none}
+#demoCap{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--ink);color:var(--bg);
+  padding:18px 28px calc(20px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:4px}
+#demoCap b{font-family:var(--font-display);font-size:clamp(22px,3vw,32px);font-weight:700;line-height:1.15}
+#demoCap span{font-size:clamp(17px,2.2vw,22px);opacity:0;transform:translateY(6px);transition:opacity .35s,transform .35s}
+#demoCap span.show{opacity:.9;transform:none}
+#demoCard{position:fixed;inset:0;z-index:30;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;text-align:center;padding:24px;transition:opacity .4s}
+#demoCard.out{opacity:0;pointer-events:none}
+#demoCard h2{font-size:clamp(34px,6vw,64px);font-weight:700;line-height:1.05;max-width:16ch}
+#demoCard p{font-size:clamp(18px,2.6vw,26px);color:var(--muted);margin:0;max-width:32ch}
+#demoCard .link{font-family:var(--font-mono);font-size:clamp(15px,2vw,20px);color:var(--accent);background:var(--sunk);padding:8px 14px;border-radius:6px}
 </style>
 </head>
 <body>
@@ -568,7 +589,39 @@ try{ start = localStorage.getItem('edl-preset') || '1'; tab = localStorage.getIt
 const h = (location.hash||'').slice(1); if (/^s(\d+|R)$/.test(h)) start = h.slice(1);
 if (!PRESETS.find(p => p.id === start)) start = '1';
 if (!tabs.includes(tab)) tab = 'concepts';
-showTab(tab); load(start, false);
+showTab(tab);
+if (h === 'demo') demo(); else load(start, false);
+
+/* demo mode: open index.html#demo, start screen recording, reload the page */
+function demo(){
+  const LINK = 'github.com/ataha/emptydir-cache-lab';   // edit before recording
+  const STEPS = [
+    ['1',  '#1 · Disk cache, sizeLimit 3Gi, no limits', 'Pod evicted at 3Gi. Cache lost, new pod starts cold.'],
+    ['11', '#11 · 15 pods × 3Gi on a node with 40Gi free', 'Every pod is "limited". The node still hits DiskPressure.'],
+    ['6',  '#6 · Cache in RAM (tmpfs), 10Gi memory limit', 'OOMKilled — and the cache survives the restart: CrashLoopBackOff.'],
+    ['5',  '#5 · Cache in RAM, no limits at all', 'The whole node runs out of memory. Neighbors get OOM-killed.'],
+    ['R',  '★ Fix · requests + limits + app caps its own cache', 'Stable. The scheduler only places pods that fit.'],
+  ];
+  document.body.classList.add('demo');
+  const card = document.createElement('div'); card.id = 'demoCard';
+  const cap = document.createElement('div'); cap.id = 'demoCap'; cap.innerHTML = '<b></b><span></span>';
+  document.body.append(card, cap);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const showCard = (h2, p, link) => { card.innerHTML = '<div class="eyebrow">Kubernetes · kubelet · cgroups</div><h2>'+h2+'</h2><p>'+p+'</p>' + (link ? '<div class="link">'+link+'</div>' : ''); card.classList.remove('out'); };
+  (async () => {
+    load('1', false);
+    showCard('Your pod has a cache limit. Is your node safe?', 'emptyDir Cache Lab — 11 scenarios, one replay each.');
+    await wait(3200); card.classList.add('out'); await wait(400);
+    for (const [id, title, sub] of STEPS){
+      const span = cap.querySelector('span');
+      cap.querySelector('b').textContent = title; span.textContent = sub; span.classList.remove('show');
+      load(id, true);
+      await wait(2700); span.classList.add('show');
+      await wait(2000);
+    }
+    showCard('Which limit trips first?', 'Try all 11 scenarios yourself. Free, open source, runs in your browser.', LINK);
+  })();
+}
 })();
 </script>
 </body>
