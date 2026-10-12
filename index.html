@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Interactive simulator for Kubernetes emptyDir cache scenarios: sizeLimit, tmpfs, memory and ephemeral-storage limits, and their impact on other pods on the node.">
+<title>emptyDir Cache Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: scenario rail on top, control panel left, live node/pod meters + verdict right, reference tabs below */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --sunk:#EAEEF2; --ink:#14202B; --muted:#5A6675; --line:#D8DEE5;
+  --accent:#0E7C72; --accent-ink:#FFFFFF; --cache:#C97A0A; --app:#3B5BA9; --other:#9AA6B4; --pagecache:#C97A0A;
+  --ok:#1E7B4F; --ok-bg:#E3F3EA; --warn:#9A6300; --warn-bg:#FBF0DA; --bad:#B42318; --bad-bg:#FBE4E1; --crit:#FFFFFF; --crit-bg:#8E1B3A;
+  --font-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --r:8px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0E1318; --surface:#161D24; --sunk:#1D262F; --ink:#E4E9EF; --muted:#94A1B1; --line:#2A3540;
+  --accent:#34C3B4; --accent-ink:#06201D; --cache:#F0A23A; --app:#7E9CF0; --other:#5D6977; --pagecache:#F0A23A;
+  --ok:#6FD3A0; --ok-bg:#12301F; --warn:#F2C164; --warn-bg:#352812; --bad:#FF8A7A; --bad-bg:#3A1714; --crit:#FFE3EA; --crit-bg:#7A1733;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E1318; --surface:#161D24; --sunk:#1D262F; --ink:#E4E9EF; --muted:#94A1B1; --line:#2A3540;
+  --accent:#34C3B4; --accent-ink:#06201D; --cache:#F0A23A; --app:#7E9CF0; --other:#5D6977; --pagecache:#F0A23A;
+  --ok:#6FD3A0; --ok-bg:#12301F; --warn:#F2C164; --warn-bg:#352812; --bad:#FF8A7A; --bad-bg:#3A1714; --crit:#FFE3EA; --crit-bg:#7A1733;
+  color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+img{max-width:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.5;padding:0 16px}
+.wrap{max-width:1240px;margin:0 auto;padding-block:20px 48px}
+h1,h2,h3{font-family:var(--font-display);text-wrap:balance;margin:0;letter-spacing:.005em}
+code,.mono{font-family:var(--font-mono);font-size:.88em}
+.eyebrow{font-family:var(--font-mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;padding-bottom:16px;border-bottom:1px solid var(--line)}
+header h1{font-size:clamp(26px,3.4vw,36px);font-weight:700}
+header p{margin:4px 0 0;color:var(--muted);max-width:68ch}
+.path{font-family:var(--font-mono);font-size:12px;color:var(--muted);background:var(--sunk);padding:4px 8px;border-radius:4px;overflow-wrap:anywhere}
+
+.rail{margin-top:18px}
+.rail-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
+.chip{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:132px;max-width:172px;text-align:left;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;cursor:pointer;color:var(--ink);font:inherit}
+.chip:hover{border-color:var(--accent)}
+.chip[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.chip .n{font-family:var(--font-display);font-weight:700;font-size:15px}
+.chip .t{font-size:12px;color:var(--muted);line-height:1.3}
+.chip.rec .n{color:var(--accent)}
+.blurb{margin:10px 0 0;padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);font-size:14px}
+.blurb b{font-family:var(--font-display);font-size:15px}
+
+.grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:20px;margin-top:20px}
+@media (max-width:880px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
+.panel h2{font-size:18px;font-weight:600;margin-bottom:12px}
+.group{display:flex;flex-direction:column;gap:14px;padding-bottom:14px;margin-bottom:14px;border-bottom:1px dashed var(--line)}
+.group:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);background:var(--sunk);border-radius:6px;padding:3px;gap:3px}
+.seg button{font:inherit;font-size:13px;border:0;border-radius:4px;padding:6px 4px;background:transparent;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.ctl{display:flex;flex-direction:column;gap:4px}
+.ctl-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ctl label{font-size:13.5px;font-weight:500;display:flex;align-items:center;gap:8px;cursor:pointer}
+.ctl .val{font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink)}
+.ctl.off .val{color:var(--muted)}
+.ctl.off input[type=range]{opacity:.35}
+.ctl .hint{font-size:12px;color:var(--muted)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;margin:0}
+button:focus-visible,input:focus-visible,.chip:focus-visible,.tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.verdict{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px;align-items:start}
+.verdict h2{font-size:24px;font-weight:700;margin:4px 0 2px}
+.verdict p{margin:0;color:var(--muted);max-width:70ch}
+.risks{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+@media (max-width:560px){.verdict{grid-template-columns:minmax(0,1fr)}.risks{align-items:flex-start;flex-direction:row;flex-wrap:wrap}}
+.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:12px;padding:3px 9px;border-radius:999px;white-space:nowrap;font-weight:500}
+.pill .k{opacity:.75}
+.r-Low{background:var(--ok-bg);color:var(--ok)}
+.r-Medium{background:var(--warn-bg);color:var(--warn)}
+.r-High{background:var(--bad-bg);color:var(--bad)}
+.r-Critical{background:var(--crit-bg);color:var(--crit)}
+.status{font-family:var(--font-mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.s-Low{color:var(--ok)} .s-Medium{color:var(--warn)} .s-High{color:var(--bad)} .s-Critical{color:var(--bad)}
+
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0 4px}
+.btn{font:inherit;font-size:14px;font-weight:600;border-radius:6px;padding:7px 14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink)}
+.progress{font-family:var(--font-mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+.meters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px;margin-top:14px}
+@media (max-width:640px){.meters{grid-template-columns:minmax(0,1fr)}}
+.meter h3{font-size:14.5px;font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.meter h3 .mono{font-weight:400;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.track{position:relative;height:26px;background:var(--sunk);border-radius:4px;margin:26px 0 6px;display:flex}
+.track .s{height:100%;transition:width .12s linear}
+.track .s:first-child{border-radius:4px 0 0 4px}
+.s.app{background:var(--app)} .s.cache{background:var(--cache)} .s.other{background:var(--other)}
+.s.pc{background:repeating-linear-gradient(135deg,var(--pagecache) 0 3px,transparent 3px 7px);opacity:.75}
+.track.over{box-shadow:0 0 0 2px var(--bad)}
+.mark{position:absolute;top:-22px;bottom:-4px;width:0;border-left:2px dashed var(--ink)}
+.mark span{position:absolute;top:0;left:4px;font-family:var(--font-mono);font-size:11px;white-space:nowrap;color:var(--ink);background:var(--surface);padding:0 3px;line-height:16px}
+.mark.right span{left:auto;right:4px}
+.mark.th{border-left-color:var(--bad)} .mark.th span{color:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.meter .note{font-size:12px;color:var(--muted);margin-top:4px}
+
+.log{list-style:none;margin:16px 0 0;padding:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.log li{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.log .at{font-family:var(--font-mono);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding-top:2px}
+.log .ev b{display:block;font-weight:600}
+.log .ev span{font-size:13.5px;color:var(--muted)}
+.log li.pending{opacity:.35}
+.log .tag{font-family:var(--font-mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;padding:1px 6px;border-radius:3px;margin-left:6px;vertical-align:1px}
+.tag.pod{background:var(--sunk);color:var(--muted)} .tag.node{background:var(--bad-bg);color:var(--bad)} .tag.info{background:var(--ok-bg);color:var(--ok)}
+.notes{margin:14px 0 0;padding-left:18px;font-size:13.5px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.notes b{color:var(--ink);font-weight:600}
+
+.ref{margin-top:28px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tab{font:inherit;font-weight:600;font-size:14px;background:none;border:0;border-bottom:2px solid transparent;padding:10px 14px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.tabpanel{padding-top:18px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;min-width:0}
+.fact h3{font-size:16px;font-weight:600;margin-bottom:6px}
+.fact p,.fact li{font-size:14px;color:var(--muted)}
+.fact p{margin:0 0 6px}
+.fact ul,.fact ol{margin:0;padding-left:18px}
+.fact b{color:var(--ink)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:760px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--font-mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:500;background:var(--sunk)}
+tbody tr{cursor:pointer}
+tbody tr:hover td{background:var(--sunk)}
+tr:last-child td{border-bottom:0}
+td.num{font-family:var(--font-display);font-weight:700;font-size:15px}
+pre{background:var(--sunk);border-radius:6px;padding:12px 14px;overflow-x:auto;font-family:var(--font-mono);font-size:12.5px;line-height:1.55;margin:8px 0 0;color:var(--ink)}
+.calc{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:10px 0}
+.calc label{font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.calc input{font:inherit;font-family:var(--font-mono);padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);width:100%}
+.calc-out{font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--accent)}
+footer{margin-top:28px;font-size:12.5px;color:var(--muted);max-width:90ch}
+@media (prefers-reduced-motion:reduce){.track .s{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Kubernetes · kubelet · cgroups</div>
+      <h1>emptyDir Cache Lab</h1>
+      <p>Pick a scenario or change the settings, then replay the cache filling up. The lab shows which limit trips first, what the kubelet or kernel does, and how far the damage spreads on the node.</p>
+    </div>
+    <div class="path">/var/lib/kubelet/pods/&lt;uid&gt;/volumes/kubernetes.io~empty-dir/cache</div>
+  </header>
+
+  <section class="rail" aria-label="Scenarios">
+    <div class="rail-head"><span class="eyebrow">Scenarios</span><span class="eyebrow" id="presetState"></span></div>
+    <div class="chips" id="chips"></div>
+    <div class="blurb" id="blurb"></div>
+  </section>
+
+  <div class="grid">
+    <aside class="panel" aria-label="Settings">
+      <h2>Settings</h2>
+      <div class="group">
+        <div class="ctl">
+          <span class="eyebrow">Where the cache is written</span>
+          <div class="seg" role="group" aria-label="Cache medium">
+            <button type="button" id="m-disk" data-m="disk">Node disk</button>
+            <button type="button" id="m-memory" data-m="memory">RAM (tmpfs)</button>
+            <button type="button" id="m-layer" data-m="layer">Container FS</button>
+          </div>
+          <span class="hint" id="mediumHint"></span>
+        </div>
+        <div class="ctl" id="c-size">
+          <div class="ctl-head"><label><input type="checkbox" id="size-on"> emptyDir sizeLimit</label><span class="val" id="size-val"></span></div>
+          <input type="range" id="size" min="0.5" max="50" step="0.5" aria-label="sizeLimit GiB">
+        </div>
+      </div>
+      <div class="group">
+        <span class="eyebrow">Pod resources</span>
+        <div class="ctl" id="c-mem">
+          <div class="ctl-head"><label><input type="checkbox" id="mem-on"> Memory limit</label><span class="val" id="mem-val"></span></div>
+          <input type="range" id="mem" min="0.5" max="64" step="0.5" aria-label="Memory limit GiB">
+          <span class="hint">Only a limit is set, so the request defaults to the same value.</span>
+        </div>
+        <div class="ctl" id="c-eph">
+          <div class="ctl-head"><label><input type="checkbox" id="eph-on"> Ephemeral-storage</label><span class="val" id="eph-val"></span></div>
+          <input type="range" id="ephreq" min="0.5" max="50" step="0.5" aria-label="Ephemeral-storage request GiB">
+          <input type="range" id="ephlim" min="0.5" max="50" step="0.5" aria-label="Ephemeral-storage limit GiB">
+          <span class="hint">Top: request (used by the scheduler). Bottom: limit (kubelet evicts above it).</span>
+        </div>
+      </div>
+      <div class="group">
+        <span class="eyebrow">Application</span>
+        <div class="ctl" id="c-app">
+          <div class="ctl-head"><label for="app">App memory (heap, buffers)</label><span class="val" id="app-val"></span></div>
+          <input type="range" id="app" min="0.25" max="32" step="0.25">
+        </div>
+        <div class="ctl" id="c-cap">
+          <div class="ctl-head"><label><input type="checkbox" id="cap-on"> App limits its own cache</label><span class="val" id="cap-val"></span></div>
+          <input type="range" id="cap" min="0.5" max="100" step="0.5" aria-label="Application cache cap GiB">
+          <span class="hint">Off = the app keeps writing until something stops it.</span>
+        </div>
+      </div>
+      <div class="group">
+        <span class="eyebrow">Node</span>
+        <div class="ctl"><div class="ctl-head"><label for="pods">Identical pods on this node</label><span class="val" id="pods-val"></span></div>
+          <input type="range" id="pods" min="1" max="40" step="1"></div>
+        <div class="ctl"><div class="ctl-head"><label for="disk">Free node disk (nodefs)</label><span class="val" id="disk-val"></span></div>
+          <input type="range" id="disk" min="10" max="500" step="5"></div>
+        <div class="ctl"><div class="ctl-head"><label for="ram">Allocatable node memory</label><span class="val" id="ram-val"></span></div>
+          <input type="range" id="ram" min="4" max="256" step="2"></div>
+      </div>
+    </aside>
+
+    <main class="panel" aria-live="polite">
+      <div class="verdict">
+        <div>
+          <div class="status" id="vStatus"></div>
+          <h2 id="vTitle"></h2>
+          <p id="vText"></p>
+        </div>
+        <div class="risks" id="vRisks"></div>
+      </div>
+      <div class="toolbar">
+        <button class="btn" type="button" id="play">Replay cache filling</button>
+        <span class="progress" id="prog"></span>
+      </div>
+      <div class="meters">
+        <div class="meter" id="mt-cache"></div>
+        <div class="meter" id="mt-podmem"></div>
+        <div class="meter" id="mt-ndisk"></div>
+        <div class="meter" id="mt-nram"></div>
+      </div>
+      <ol class="log" id="log"></ol>
+      <ul class="notes" id="notes"></ul>
+    </main>
+  </div>
+
+  <section class="ref">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="t-concepts" aria-selected="true" aria-controls="p-concepts">Key concepts</button>
+      <button class="tab" role="tab" id="t-matrix" aria-selected="false" aria-controls="p-matrix">All scenarios</button>
+      <button class="tab" role="tab" id="t-rec" aria-selected="false" aria-controls="p-rec">Recommendation</button>
+      <button class="tab" role="tab" id="t-gaps" aria-selected="false" aria-controls="p-gaps">What limits don't cover</button>
+    </div>
+
+    <div class="tabpanel" role="tabpanel" id="p-concepts">
+      <div class="tbl" style="margin-bottom:16px">
+        <table>
+          <thead><tr><th></th><th>Evicted</th><th>OOMKilled</th></tr></thead>
+          <tbody style="cursor:default">
+            <tr><td><b>Who acts</b></td><td>kubelet, checking about every 10s</td><td>Linux kernel, immediately at the cgroup limit</td></tr>
+            <tr><td><b>Trigger</b></td><td>emptyDir over sizeLimit, ephemeral-storage over limit, or node DiskPressure / MemoryPressure</td><td>Memory (including tmpfs files) reaches the container limit, or the node runs out of memory</td></tr>
+            <tr><td><b>What stops</b></td><td>The whole pod. A controller creates a new pod.</td><td>A process in the container. The container restarts in the same pod.</td></tr>
+            <tr><td><b>emptyDir data</b></td><td>Deleted. New pod starts with a cold cache.</td><td>Kept. The restarted container sees the old cache.</td></tr>
+            <tr><td><b>How it shows</b></td><td><code>status.reason: Evicted</code>, message "Usage of EmptyDir volume "cache" exceeds the limit "3Gi"."</td><td><code>lastState.terminated.reason: OOMKilled</code>, exit code 137</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="cols">
+        <div class="fact"><h3>sizeLimit on disk is not a hard quota</h3>
+          <p>The kubelet measures the volume periodically and evicts the pod once it is over the limit. A fast writer can overshoot first. The app never sees "disk full".</p>
+          <p><b>The scheduler ignores sizeLimit.</b> Only ephemeral-storage requests reserve disk on a node.</p></div>
+        <div class="fact"><h3>Disk writes use page cache</h3>
+          <p>Files written to disk pass through the page cache, which is charged to the container's memory cgroup. It is reclaimable, so it shows as high memory use but rarely causes OOM kills.</p></div>
+        <div class="fact"><h3>tmpfs is real RAM</h3>
+          <p>Every file in a <code>medium: Memory</code> volume counts as container memory and cannot be reclaimed without deleting it.</p>
+          <p><b>sizeLimit is the tmpfs size.</b> Writes past it fail with ENOSPC; no eviction. Without sizeLimit, the tmpfs is sized to the pod memory limit, or to node allocatable memory if there is none.</p>
+          <p>tmpfs data survives container restarts and does not count toward ephemeral-storage.</p></div>
+        <div class="fact"><h3>Who goes first under node pressure</h3>
+          <ul>
+            <li><b>Kernel OOM killer</b> uses oom_score_adj: BestEffort 1000 (first), Burstable 2–999, Guaranteed −997 (last).</li>
+            <li><b>kubelet eviction</b> ranks by usage above request, then priority class, then amount above request.</li>
+            <li>Ephemeral-storage settings do not change the QoS class.</li>
+          </ul></div>
+        <div class="fact"><h3>Pods without memory limits</h3>
+          <p>The container cgroup has no cap, but all pods sit under the <code>kubepods</code> cgroup, capped at node allocatable memory. Pods normally run without swap.</p>
+          <p>The kubelet checks <code>memory.available</code> about every 10s (default threshold 100Mi). Fast growth reaches the kernel OOM killer first.</p></div>
+      </div>
+    </div>
+
+    <div class="tabpanel" role="tabpanel" id="p-matrix" hidden>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>#</th><th>Setup</th><th>Cache size enforced by</th><th>Memory enforced by</th><th>What happens when the cache fills</th><th>Other pods</th></tr></thead>
+          <tbody id="matrix"></tbody>
+        </table>
+      </div>
+      <p class="eyebrow" style="margin-top:8px">Click a row to load it into the lab</p>
+    </div>
+
+    <div class="tabpanel" role="tabpanel" id="p-rec" hidden>
+      <div class="cols">
+        <div class="fact"><h3>For many pods with a 3G cache and no memory limits</h3>
+          <p>Keep the disk-backed cache at 3Gi. Add memory requests/limits and ephemeral-storage requests/limits to every pod. Use tmpfs only if disk I/O is a proven bottleneck.</p>
+<pre>resources:
+  requests:
+    cpu: "500m"                 # observed usage
+    memory: "2Gi"               # observed p95
+    ephemeral-storage: "3.5Gi"  # cache + logs + writable layer
+  limits:
+    memory: "3Gi"               # p95 + 30-50% headroom
+    ephemeral-storage: "4Gi"
+volumes:
+- name: cache
+  emptyDir:
+    sizeLimit: 3Gi</pre>
+          <p style="margin-top:10px"><b>Most important:</b> set the app's own cache maximum below sizeLimit (about 2.4–2.5Gi for 3Gi). Eviction then becomes a safety net that never fires. Load the "Fix" scenario above to see it.</p></div>
+        <div class="fact"><h3>Rollout steps</h3>
+          <ol>
+            <li><b>Measure first</b> with <code>kubectl top pod</code> and kubelet stats. Base limits on real usage.</li>
+            <li><b>Check node capacity:</b> total ephemeral-storage requests must fit node allocatable storage, with margin above the 10% eviction threshold.</li>
+            <li><b>Enforce defaults</b> with a namespace LimitRange; optionally a ResourceQuota on <code>requests.ephemeral-storage</code> and <code>limits.memory</code>.</li>
+            <li><b>Test on one node</b> with <code>scripts/emptydir-scenarios.sh</code>, then roll out gradually.</li>
+          </ol></div>
+        <div class="fact"><h3>tmpfs sizing calculator</h3>
+          <p>Memory limit ≥ cache sizeLimit + app peak memory + margin.</p>
+          <div class="calc">
+            <label for="k-cache">Cache sizeLimit (GiB)<input id="k-cache" type="number" min="0" step="0.5" value="3"></label>
+            <label for="k-app">App peak (GiB)<input id="k-app" type="number" min="0" step="0.5" value="4"></label>
+            <label for="k-margin">Margin (%)<input id="k-margin" type="number" min="0" step="5" value="25"></label>
+          </div>
+          <div class="eyebrow">Minimum memory limit</div>
+          <div class="calc-out" id="k-out"></div>
+          <p id="k-note" style="margin-top:4px"></p></div>
+      </div>
+    </div>
+
+    <div class="tabpanel" role="tabpanel" id="p-gaps" hidden>
+      <div class="cols">
+        <div class="fact"><h3>Disk I/O</h3><p>Kubernetes does not limit IOPS or bandwidth per pod by default. A heavy cache writer slows neighbors' reads, writes and logging, and etcd on control-plane nodes.</p></div>
+        <div class="fact"><h3>Inodes</h3><p>sizeLimit counts bytes, not files. Millions of small cache files can exhaust inodes while space remains, which also triggers DiskPressure (<code>nodefs.inodesFree&lt;5%</code>).</p></div>
+        <div class="fact"><h3>Priority classes</h3><p>Within the same QoS class, a higher-priority pod survives longer. If cache-heavy pods outrank their neighbors, the neighbors are evicted first.</p></div>
+        <div class="fact"><h3>Mass refill</h3><p>Pods evicted together restart with empty caches and refill at the same time, which can saturate node disk I/O.</p></div>
+        <div class="fact"><h3>Namespace defaults</h3><p>A LimitRange can silently apply default limits the app team doesn't expect.</p></div>
+        <div class="fact"><h3>Alternative</h3><p>A PVC or generic ephemeral volume gives a hard size limit enforced by the filesystem and keeps cache I/O off the node root disk.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>Model assumptions: default kubelet hard-eviction thresholds (<code>nodefs.available&lt;10%</code>, <code>memory.available&lt;100Mi</code>), Kubernetes 1.22+ tmpfs sizing, all pods on the node identical, container logs and kubelet polling overshoot not counted. Real clusters can differ; confirm with the test script on a test node.</footer>
+</div>
+
+<script>
+(function(){
+const BASE = {medium:'disk', sizeOn:true, size:3, memOn:false, mem:10, ephOn:false, ephReq:3, ephLim:5, app:2, capOn:false, cap:12, pods:1, disk:100, ram:32};
+const PRESETS = [
+  {id:'1', t:'Disk · 3G · no limits', c:{}, b:'Disk-backed cache with sizeLimit 3Gi and no resource limits (BestEffort). Eviction at 3Gi stops the cache; memory has no cap.', size:'kubelet polling (3Gi)', memE:'Nothing', what:'Pod evicted, cache lost; memory unbounded', risk:'Medium'},
+  {id:'2', t:'Disk · 3G · mem 10G', c:{memOn:true}, b:'Same cache, plus a 10Gi memory limit. The memory limit has no effect on the disk cache; it only protects the node from the app.', size:'kubelet polling (3Gi)', memE:'cgroup (10Gi)', what:'Pod evicted at 3Gi, or OOMKilled at 10Gi app memory', risk:'Low'},
+  {id:'3', t:'Disk · 10G · mem 10G', c:{size:10, memOn:true}, b:'10Gi disk cache with a 10Gi memory limit. The equal numbers mean nothing for a disk volume. Try raising the pod count to see the disk overcommit.', size:'kubelet polling (10Gi)', memE:'cgroup (10Gi)', what:'Evicted at 10Gi; several pods can fill the disk', risk:'Medium'},
+  {id:'4', t:'Disk · unlimited · none', c:{sizeOn:false}, b:'No sizeLimit and no limits. Only the node eviction threshold stops the cache.', size:'Nothing', memE:'Nothing', what:'Node DiskPressure, neighbors evicted, possible NotReady', risk:'High'},
+  {id:'5', t:'tmpfs · unlimited · none', c:{medium:'memory', sizeOn:false}, b:'Cache in RAM with no sizeLimit and no limits. The tmpfs is sized to node allocatable memory.', size:'Nothing (node allocatable)', memE:'Nothing', what:'Node MemoryPressure, OOM kills across the node', risk:'Critical'},
+  {id:'6', t:'tmpfs · no size · mem 10G', c:{medium:'memory', sizeOn:false, memOn:true}, b:'Cache in RAM, memory limit 10Gi. The tmpfs is sized to 10Gi and shares that budget with the app.', size:'tmpfs = memory limit', memE:'cgroup (10Gi, shared)', what:'OOMKilled, then CrashLoopBackOff', risk:'Low'},
+  {id:'7', t:'tmpfs · 3G · mem 10G', c:{medium:'memory', memOn:true}, b:'Recommended tmpfs pattern: a 3Gi RAM disk under a 10Gi limit. Writes past 3Gi fail with ENOSPC and the pod keeps running.', size:'tmpfs size (kernel, hard)', memE:'cgroup (10Gi)', what:'ENOSPC on writes; pod keeps running', risk:'Low'},
+  {id:'8', t:'Disk · ephemeral 3/5G', c:{sizeOn:false, ephOn:true}, b:'Recommended disk pattern: ephemeral-storage request 3Gi, limit 5Gi. The scheduler reserves the disk.', size:'ephemeral-storage limit (5Gi)', memE:'Nothing', what:'Pod evicted at 5Gi; disk reserved, memory still unbounded', risk:'Medium'},
+  {id:'9', t:'Container FS · none', c:{medium:'layer', sizeOn:false}, b:'No emptyDir: the app writes the cache into the container\'s own writable layer. No sizeLimit can apply.', size:'Nothing', memE:'Nothing', what:'Same as scenario 4, harder to spot', risk:'High'},
+  {id:'10', t:'tmpfs · 10G · mem 10G', c:{medium:'memory', size:10, memOn:true}, b:'tmpfs sizeLimit equal to the memory limit: zero headroom for the app. The size cap is never reached.', size:'tmpfs size (never reached)', memE:'cgroup (10Gi, shared)', what:'OOMKilled, then CrashLoopBackOff', risk:'Low'},
+  {id:'11', t:'15 pods · 3G · no limits', c:{pods:15, disk:40}, b:'Many pods, each with a 3Gi limit, on a node with 40Gi free. Each pod is limited; the total is not.', size:'kubelet polling (3Gi per pod)', memE:'Nothing', what:'Node DiskPressure from the total', risk:'High'},
+  {id:'R', t:'Recommended', c:{pods:15, disk:40, memOn:true, mem:3, ephOn:true, ephReq:3.5, ephLim:4, capOn:true, cap:2.5}, b:'Recommended config for scenario 11: sizeLimit 3Gi, memory 2Gi/3Gi, ephemeral-storage 3.5Gi/4Gi, and the app caps its cache at 2.5Gi. The scheduler only places pods that fit.', size:'App cap, then kubelet', memE:'cgroup (3Gi)', what:'Stable; extra pods wait in Pending', risk:'Low', rec:true},
+];
+let S = Object.assign({}, BASE), active = '1';
+const $ = id => document.getElementById(id);
+const g = v => (v >= 100 ? v.toFixed(0) : v >= 10 ? (Math.round(v*10)/10).toString() : (Math.round(v*100)/100).toString()) + ' GiB';
+const gs = v => (v >= 10 ? Math.round(v) : Math.round(v*10)/10) + 'G';
+
+/* ---------------- model ---------------- */
+function evaluate(s){
+  const r = {events:[], notes:[]};
+  const disky = s.medium !== 'memory';
+  const sizeApplies = s.sizeOn && s.medium !== 'layer';
+  r.qos = s.memOn ? 'Burstable' : 'BestEffort';
+  let fitD = Infinity, fitM = Infinity;
+  if (s.ephOn) fitD = Math.floor(s.disk / s.ephReq);
+  if (s.memOn) fitM = Math.floor(s.ram / s.mem);
+  r.sched = Math.max(0, Math.min(s.pods, fitD, fitM));
+  r.pending = s.pods - r.sched;
+  if (s.medium === 'memory') {
+    const podMem = s.memOn ? s.mem : s.ram;
+    r.tmpfs = sizeApplies ? Math.min(s.size, podMem) : podMem;
+  }
+  if (r.sched === 0){
+    r.stop = {type:'unsched', at:0}; r.final = 0;
+    return finish(s, r);
+  }
+  const E = (at, type, pr, title, detail, scope, stop) => r.events.push({at:Math.max(0,at), type, pr, title, detail, scope, stop});
+  if (s.memOn && s.app >= s.mem) E(0,'oom0',2,'OOMKilled before any caching','The app alone needs more memory than its limit. The container restarts and is killed again.','pod',true);
+  if (!s.memOn && r.sched * s.app >= s.ram - 0.1) E(0,'mp-app',3,'Node MemoryPressure from app memory','The pods\' own memory exceeds what the node can give. kubelet evicts pods; the kernel OOM killer may act first.','node',true);
+  if (s.capOn) E(s.cap,'cap',0,'App reaches its own cache cap','The app removes old entries itself. Nothing else needs to act.','info',true);
+  if (disky){
+    if (sizeApplies) E(s.size,'ev-size',2,'kubelet evicts the pod (sizeLimit)','"Usage of EmptyDir volume "cache" exceeds the limit". Detected on the next ~10s check, so writes can overshoot. Cache is deleted; the replacement pod starts cold and refills, so the cycle repeats.','pod',true);
+    if (s.ephOn) E(s.ephLim,'ev-eph',2,'kubelet evicts the pod (ephemeral-storage)','"Pod ephemeral local storage usage exceeds the total limit of containers". The limit counts cache, logs and the writable layer together.','pod',true);
+    const dp = 0.9 * s.disk / r.sched;
+    E(dp,'dp',3,'Node DiskPressure','Free node disk drops below 10%. kubelet removes unused images and dead containers, sets a NoSchedule taint, then evicts pods ranked by usage above request and priority. ' + (r.sched>1 ? 'All '+r.sched+' pods look alike, so any of them can go, including healthy neighbors.' : 'This pod usually goes first, but lower-priority neighbors can be evicted before it.') + ' If writes outpace the ~10s check, the disk can reach 100% and the node may go NotReady.','node',true);
+  } else {
+    if (s.memOn) E(s.mem - s.app,'oom',2,'Container OOMKilled','App memory + tmpfs files reach the '+g(s.mem)+' limit. The tmpfs files survive the restart and still count, so the new container is killed again: CrashLoopBackOff until the pod is deleted.','pod',true);
+    E(r.tmpfs,'enospc',1,'Writes fail: No space left on device','The tmpfs mount is full at '+g(r.tmpfs)+'. Enforced by the kernel on write, so no eviction. The app can catch ENOSPC and clear old entries.','info',true);
+    if (!s.memOn) E(s.ram / r.sched - s.app,'mp',3,'Node MemoryPressure and OOM kills','tmpfs files are RAM that cannot be reclaimed. kubelet evicts pods; if memory runs out faster than its ~10s check, the kernel OOM killer kills processes across the node. Killing processes does not free tmpfs, so kills continue until the pod is evicted and the volume deleted.','node',true);
+  }
+  r.events.sort((a,b) => a.at - b.at || a.pr - b.pr);
+  r.stop = r.events.find(e => e.stop);
+  r.final = r.stop.at;
+  return finish(s, r);
+}
+
+function finish(s, r){
+  const t = r.stop.type, disky = s.medium !== 'memory', sizeApplies = s.sizeOn && s.medium !== 'layer';
+  const V = {
+    unsched:['Pod stays Pending','No node capacity is free for this pod\'s requests. The scheduler protects the node by not placing it.','Low','Low'],
+    cap:['Stable','The app keeps its cache under every limit. No eviction, no OOM kill.', s.memOn ? 'Low':'Medium', 'Low'],
+    enospc:['Pod keeps running, writes fail','The RAM disk is full. The pod is not evicted; the app must handle "No space left on device".', s.memOn ? 'Low':'Medium','Low'],
+    'ev-size':['Pod evicted at sizeLimit','The cache is lost and a new pod starts cold. Each pod is contained, but it is an eviction loop for the app.', s.memOn ? 'Low':'Medium','Medium'],
+    'ev-eph':['Pod evicted at ephemeral-storage limit','Contained to this pod. The scheduler reserved disk for it, so the node is not overcommitted.', s.memOn ? 'Low':'Medium','Medium'],
+    oom:['OOMKilled, then CrashLoopBackOff','The cache and the app share one memory budget. The pod stays down until it is deleted.','Low','High'],
+    oom0:['OOMKilled','The memory limit is smaller than what the app needs.','Low','High'],
+    dp:['Node DiskPressure','Disk fills before any per-pod limit acts. Damage spreads to the whole node.','High','High'],
+    mp:['Node memory exhausted','The RAM cache takes node memory that cannot be reclaimed. Damage spreads to the whole node.','Critical','High'],
+    'mp-app':['Node MemoryPressure','App memory alone exceeds the node. Without memory limits nothing contains it.','High','High'],
+  }[t];
+  r.title = V[0]; r.text = V[1]; r.nRisk = V[2]; r.aRisk = V[3];
+  const n = r.notes;
+  n.push('<b>QoS class:</b> ' + r.qos + (r.qos==='BestEffort' ? ' — first in line for kernel OOM kills and node-pressure eviction.' : ' — memory request = limit, so the scheduler reserves it.'));
+  if (s.medium === 'memory') n.push('<b>tmpfs size:</b> ' + g(r.tmpfs) + (s.sizeOn ? ' (from sizeLimit' + (s.memOn && s.size > s.mem ? ', capped at the memory limit)' : ')') : s.memOn ? ' (no sizeLimit, so it equals the memory limit)' : ' (no sizeLimit or memory limit, so it equals node allocatable memory)') + '. tmpfs does not count toward ephemeral-storage.');
+  if (s.medium === 'layer') n.push('<b>Container filesystem:</b> no volume, so sizeLimit cannot apply. Data is lost on every container restart.');
+  if (s.medium === 'layer' && s.sizeOn) n.push('<b>sizeLimit is ignored</b> here because there is no emptyDir.');
+  if (disky && s.memOn) n.push('<b>Page cache:</b> disk writes are cached in RAM and charged to the ' + g(s.mem) + ' limit, but the kernel reclaims it, so it does not cause OOM kills.');
+  if (r.pending > 0) n.push('<b>Scheduler:</b> only ' + r.sched + ' of ' + s.pods + ' pods fit (requests vs node capacity); ' + r.pending + ' stay Pending. That is the requests protecting the node.');
+  if (disky && !s.ephOn && r.sched > 1 && sizeApplies) {
+    const tot = r.sched * s.size;
+    n.push('<b>Not reserved:</b> ' + r.sched + ' pods × ' + g(s.size) + ' = ' + g(tot) + ' of possible cache vs ' + g(s.disk) + ' free. The scheduler ignores sizeLimit' + (tot > 0.9*s.disk ? ', so the total can trigger DiskPressure.' : '; this node has room, but nothing guarantees it.'));
+  }
+  if (!s.memOn && t !== 'mp' && t !== 'mp-app') n.push('<b>No memory limit:</b> a leak or spike in any pod can push the node into MemoryPressure.');
+  if (s.capOn && s.sizeOn && s.medium!=='layer' && s.cap >= s.size) n.push('<b>Cap above sizeLimit:</b> set the app\'s cache cap below ' + g(s.size) + ' so the kubelet never has to act.');
+  return r;
+}
+
+/* ---------------- rendering ---------------- */
+function meter(el, o){
+  const max = Math.max(o.max, 0.0001);
+  let sum = 0; const segs = o.segs.filter(x => x.v > 0);
+  const html = segs.map(x => { const w = Math.max(0, Math.min(x.v, max - sum)); sum += x.v; return '<div class="s '+x.cls+'" style="width:'+(w/max*100)+'%" title="'+x.label+': '+g(x.v)+'"></div>'; }).join('');
+  const marks = (o.marks||[]).filter(m => m.v > 0 && m.v <= max*1.0001).map(m => { const p = m.v/max*100; return '<div class="mark '+(m.cls||'')+(p>70?' right':'')+'" style="left:'+p+'%"><span>'+m.label+'</span></div>'; }).join('');
+  const over = o.overAt !== undefined && sum > o.overAt + 1e-9;
+  el.innerHTML = '<h3>'+o.title+'<span class="mono">'+o.readout+'</span></h3>' +
+    '<div class="track'+(over?' over':'')+'">'+html+marks+'</div>' +
+    '<div class="legend">' + o.segs.map(x => '<span><i class="s '+x.cls+'" style="display:inline-block"></i>'+x.label+'</span>').join('') + '</div>' +
+    (o.note ? '<div class="note">'+o.note+'</div>' : '');
+}
+
+function draw(r, c){
+  const s = S, disky = s.medium !== 'memory', n = r.sched || 0;
+  const lims = [];
+  if (s.sizeOn && s.medium!=='layer' && disky) lims.push({v:s.size, label:'sizeLimit '+gs(s.size)});
+  if (s.ephOn && disky) lims.push({v:s.ephLim, label:'eph. limit '+gs(s.ephLim)});
+  if (s.medium==='memory') lims.push({v:r.tmpfs, label:'tmpfs '+gs(r.tmpfs)});
+  if (s.capOn) lims.push({v:s.cap, label:'app cap '+gs(s.cap)});
+  const cMax = Math.max(r.final*1.15, ...lims.filter(l=>l.v <= Math.max(r.final*3, 1)).map(l=>l.v*1.1), 1);
+  meter($('mt-cache'), {title:'Cache in this pod', readout:g(c), max:cMax,
+    segs:[{v:c, cls:'cache', label:'cache files'}], marks:lims,
+    note: s.medium==='memory' ? 'Stored in RAM (tmpfs).' : s.medium==='layer' ? 'Stored in the container writable layer.' : 'Stored on node disk.'});
+  const pc = disky ? Math.min(c, s.memOn ? Math.max(0, s.mem - s.app) : Math.max(0, s.ram/Math.max(n,1) - s.app)) : 0;
+  const tm = disky ? 0 : c;
+  const used = s.app + tm;
+  const pmMax = s.memOn ? Math.max(s.mem, used) * 1.08 : Math.max((used + pc) * 1.2, 4);
+  meter($('mt-podmem'), {title:'Pod memory', readout: g(used) + (s.memOn ? ' / '+g(s.mem) : ' / no limit'), max:pmMax,
+    segs:[{v:s.app, cls:'app', label:'app'}, {v:tm, cls:'cache', label:'tmpfs cache'}, {v:pc, cls:'pc', label:'page cache (reclaimable)'}],
+    marks: s.memOn ? [{v:s.mem, label:'limit '+gs(s.mem), cls:'th'}] : [], overAt: s.memOn ? s.mem : undefined,
+    note: s.memOn ? '' : 'No cgroup cap: bounded only by the node.'});
+  const dThis = disky && n ? c : 0, dOther = disky ? Math.max(0, n-1) * c : 0;
+  meter($('mt-ndisk'), {title:'Node disk', readout: g(dThis+dOther) + ' / ' + g(s.disk), max:s.disk,
+    segs:[{v:dThis, cls:'cache', label:'this pod'}, {v:dOther, cls:'other', label:(Math.max(0,n-1))+' other pods'}],
+    marks:[{v:s.disk*0.9, label:'eviction 90%', cls:'th'}], overAt:s.disk*0.9,
+    note: disky ? (s.ephOn ? 'Reserved by scheduler: '+g(n*s.ephReq)+'.' : 'Nothing reserved by the scheduler.') : 'tmpfs cache does not use node disk.'});
+  const rThis = n ? s.app + tm : 0, rOther = Math.max(0, n-1) * (s.app + tm);
+  meter($('mt-nram'), {title:'Node memory', readout: g(rThis+rOther) + ' / ' + g(s.ram), max:s.ram,
+    segs:[{v:rThis, cls:'app', label:'this pod'}, {v:rOther, cls:'other', label:(Math.max(0,n-1))+' other pods'}],
+    marks:[{v:Math.max(0,s.ram-0.1), label:'100Mi left', cls:'th'}], overAt:s.ram-0.1,
+    note: s.memOn ? 'Reserved by scheduler: '+g(n*s.mem)+'.' : 'Nothing reserved by the scheduler.'});
+  const shown = r.events.filter(e => e.at <= r.final + 1e-9);
+  $('log').innerHTML = (r.stop.type==='unsched' ? [{at:0,title:'Pod is not scheduled',detail:'Requests are larger than the free capacity on this node.',scope:'info'}] : shown).map(e =>
+    '<li class="'+(e.at > c + 1e-9 ? 'pending' : '')+'"><div class="at">'+(e.at===0?'at start':'cache '+gs(e.at))+'</div><div class="ev"><b>'+e.title+'<span class="tag '+e.scope+'">'+(e.scope==='node'?'node-wide':e.scope==='pod'?'this pod':'contained')+'</span></b><span>'+e.detail+'</span></div></li>').join('');
+  $('prog').textContent = r.stop.type==='unsched' ? '' : 'cache ' + g(c) + ' of ' + g(r.final);
+}
+
+function verdict(r){
+  $('vStatus').className = 'status s-' + r.nRisk;
+  $('vStatus').textContent = r.stop.type==='unsched' ? 'Scheduling' : 'Stops at ' + g(r.final) + ' of cache';
+  $('vTitle').textContent = r.title;
+  $('vText').textContent = r.text;
+  $('vRisks').innerHTML = '<span class="pill r-'+r.nRisk+'"><span class="k">Other pods</span>'+r.nRisk+'</span><span class="pill r-'+r.aRisk+'"><span class="k">This app</span>'+r.aRisk+'</span>';
+  $('notes').innerHTML = r.notes.map(x => '<li>'+x+'</li>').join('');
+}
+
+let anim = null, R = null;
+function run(animate){
+  if (anim) cancelAnimationFrame(anim), anim = null;
+  R = evaluate(S); verdict(R);
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!animate || reduce || R.final === 0){ draw(R, R.final); return; }
+  const dur = 2600, t0 = performance.now();
+  const step = now => { const k = Math.min(1, (now - t0)/dur); draw(R, R.final * k); if (k < 1) anim = requestAnimationFrame(step); else anim = null; };
+  anim = requestAnimationFrame(step);
+}
+
+/* ---------------- controls ---------------- */
+const MED_HINT = {disk:'emptyDir: {} on node disk. sizeLimit is checked by kubelet polling.', memory:'emptyDir: {medium: Memory}. Files are RAM; sizeLimit is the tmpfs size.', layer:'No volume. The app writes into the container\'s own filesystem.'};
+function sync(){
+  ['disk','memory','layer'].forEach(m => $('m-'+m).setAttribute('aria-pressed', S.medium===m));
+  $('mediumHint').textContent = MED_HINT[S.medium];
+  $('size-on').checked = S.sizeOn; $('size').value = S.size; $('size-val').textContent = S.medium==='layer' ? 'n/a' : S.sizeOn ? gs(S.size) : 'none';
+  $('c-size').classList.toggle('off', !S.sizeOn || S.medium==='layer');
+  $('size-on').disabled = $('size').disabled = S.medium==='layer';
+  $('mem-on').checked = S.memOn; $('mem').value = S.mem; $('mem-val').textContent = S.memOn ? gs(S.mem) : 'none'; $('c-mem').classList.toggle('off', !S.memOn);
+  $('eph-on').checked = S.ephOn; $('ephreq').value = S.ephReq; $('ephlim').value = S.ephLim;
+  $('eph-val').textContent = S.ephOn ? gs(S.ephReq)+' / '+gs(S.ephLim) : 'none'; $('c-eph').classList.toggle('off', !S.ephOn);
+  $('app').value = S.app; $('app-val').textContent = gs(S.app);
+  $('cap-on').checked = S.capOn; $('cap').value = S.cap; $('cap-val').textContent = S.capOn ? gs(S.cap) : 'keeps writing'; $('c-cap').classList.toggle('off', !S.capOn);
+  $('pods').value = S.pods; $('pods-val').textContent = S.pods;
+  $('disk').value = S.disk; $('disk-val').textContent = gs(S.disk);
+  $('ram').value = S.ram; $('ram-val').textContent = gs(S.ram);
+  document.querySelectorAll('.chip').forEach(ch => ch.setAttribute('aria-pressed', ch.dataset.id === active));
+  const p = PRESETS.find(x => x.id === active);
+  $('blurb').innerHTML = p ? '<b>' + (p.rec ? 'Recommended' : 'Scenario ' + p.id) + ':</b> ' + p.b : '<b>Custom settings.</b> Pick a scenario above to reset.';
+  $('presetState').textContent = p ? '' : 'modified';
+}
+function set(k, v, animate){ S[k] = v; active = null; sync(); run(!!animate); }
+
+$('chips').innerHTML = PRESETS.map(p => '<button type="button" class="chip'+(p.rec?' rec':'')+'" data-id="'+p.id+'"><span class="n">'+(p.rec?'★ Fix':'#'+p.id)+'</span><span class="t">'+p.t+'</span></button>').join('');
+function load(id, animate){ const p = PRESETS.find(x => x.id === id); S = Object.assign({}, BASE, p.c); active = id; sync(); run(animate); try{localStorage.setItem('edl-preset', id)}catch(e){} }
+$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) load(b.dataset.id, true); });
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => set('medium', b.dataset.m, true)));
+const bindChk = (id,k) => $(id).addEventListener('change', e => set(k, e.target.checked, true));
+bindChk('size-on','sizeOn'); bindChk('mem-on','memOn'); bindChk('eph-on','ephOn'); bindChk('cap-on','capOn');
+const bindRange = (id,k,onKey) => { $(id).addEventListener('input', e => { S[k] = parseFloat(e.target.value); if (onKey) S[onKey] = true; if (k==='ephReq' && S.ephLim < S.ephReq) S.ephLim = S.ephReq; if (k==='ephLim' && S.ephLim < S.ephReq) S.ephReq = S.ephLim; active = null; sync(); run(false); }); };
+bindRange('size','size','sizeOn'); bindRange('mem','mem','memOn'); bindRange('ephreq','ephReq','ephOn'); bindRange('ephlim','ephLim','ephOn');
+bindRange('app','app'); bindRange('cap','cap','capOn'); bindRange('pods','pods'); bindRange('disk','disk'); bindRange('ram','ram');
+$('play').addEventListener('click', () => run(true));
+
+$('matrix').innerHTML = PRESETS.map(p => '<tr data-id="'+p.id+'"><td class="num">'+(p.rec?'Fix':p.id)+'</td><td>'+p.t+'</td><td>'+p.size+'</td><td>'+p.memE+'</td><td>'+p.what+'</td><td><span class="pill r-'+p.risk+'">'+p.risk+'</span></td></tr>').join('');
+$('matrix').addEventListener('click', e => { const tr = e.target.closest('tr'); if (!tr) return; load(tr.dataset.id, true); document.querySelector('.rail').scrollIntoView({behavior:'smooth'}); });
+
+const tabs = ['concepts','matrix','rec','gaps'];
+function showTab(id){ tabs.forEach(t => { $('t-'+t).setAttribute('aria-selected', t===id); $('p-'+t).hidden = t!==id; }); try{localStorage.setItem('edl-tab', id)}catch(e){} }
+tabs.forEach(t => $('t-'+t).addEventListener('click', () => showTab(t)));
+
+function calc(){ const c = parseFloat($('k-cache').value)||0, a = parseFloat($('k-app').value)||0, m = parseFloat($('k-margin').value)||0;
+  const v = (c + a) * (1 + m/100), up = Math.ceil(v*2)/2;
+  $('k-out').textContent = up + 'Gi';
+  $('k-note').textContent = '(' + c + ' + ' + a + ') × ' + (1+m/100).toFixed(2) + ' = ' + v.toFixed(2) + ' GiB, rounded up to the next 0.5Gi.'; }
+['k-cache','k-app','k-margin'].forEach(id => $(id).addEventListener('input', calc)); calc();
+
+/* init: #s1 … #s11 or #sR in the URL opens that scenario */
+let start = '1', tab = 'concepts';
+try{ start = localStorage.getItem('edl-preset') || '1'; tab = localStorage.getItem('edl-tab') || 'concepts'; }catch(e){}
+const h = (location.hash||'').slice(1); if (/^s(\d+|R)$/.test(h)) start = h.slice(1);
+if (!PRESETS.find(p => p.id === start)) start = '1';
+if (!tabs.includes(tab)) tab = 'concepts';
+showTab(tab); load(start, false);
+})();
+</script>
+</body>
+</html>
